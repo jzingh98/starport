@@ -1,0 +1,6 @@
+apiVersion: v2
+name: starport
+description: Self-hostable browser game catalog and publishing studio
+type: application
+version: 0.1.0
+appVersion: 0.1.0

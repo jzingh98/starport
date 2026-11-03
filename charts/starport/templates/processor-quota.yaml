@@ -1,0 +1,16 @@
+{{- if .Values.processor.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "starport.fullname" . }}-processor
+  namespace: {{ required "processor.serviceAccount.namespace is required" .Values.processor.serviceAccount.namespace }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+spec:
+  hard:
+    count/jobs.batch: {{ .Values.processor.quota.activeJobs | quote }}
+    pods: {{ .Values.processor.quota.pods | quote }}
+    requests.cpu: {{ .Values.processor.quota.requestsCpu | quote }}
+    requests.memory: {{ .Values.processor.quota.requestsMemory | quote }}
+    limits.memory: {{ .Values.processor.quota.limitsMemory | quote }}
+{{- end }}

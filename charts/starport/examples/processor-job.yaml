@@ -1,0 +1,56 @@
+# Dispatcher contract, not rendered by Helm. Replace every ${...} with one
+# validated upload's values and create this Job in the process namespace only.
+# The image must be pinned by digest. Signed URLs are single-object, short-lived
+# capabilities and must never grant bucket listing, shared release writes, or
+# access to another upload. The processor receives no KSA token or app secret.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: starport-process-${UPLOAD_ID}
+  namespace: starport-process
+  labels:
+    app.kubernetes.io/name: starport
+    app.kubernetes.io/instance: starport
+    app.kubernetes.io/component: processor
+    starport.club/upload-id: "${UPLOAD_ID}"
+spec:
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 600
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: starport
+        app.kubernetes.io/instance: starport
+        app.kubernetes.io/component: processor
+    spec:
+      serviceAccountName: ${PROCESSOR_KSA}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: process
+          image: ${PROCESSOR_IMAGE_DIGEST}
+          imagePullPolicy: IfNotPresent
+          args: ["--remote", "$(UPLOAD_READ_URL)", "$(OUTPUT_WRITE_URL)"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: UPLOAD_ID, value: "${UPLOAD_ID}"}
+            - {name: UPLOAD_READ_URL, value: "${ONE_OBJECT_READ_URL}"}
+            - {name: OUTPUT_WRITE_URL, value: "${ONE_OBJECT_WRITE_URL}"}
+          volumeMounts:
+            - {name: scratch, mountPath: /tmp}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi, ephemeral-storage: 1Gi}
+            limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 3Gi}
+      volumes:
+        - name: scratch
+          emptyDir: {sizeLimit: 2Gi}

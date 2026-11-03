@@ -1,0 +1,26 @@
+{{- if .Values.httpRoute.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "starport.fullname" . }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- tpl (toYaml .Values.httpRoute.parentRefs) . | nindent 4 }}
+  hostnames:
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /api}
+      backendRefs:
+        - {name: {{ include "starport.backendServiceName" . }}, port: {{ .Values.backend.service.port }}}
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - {name: {{ include "starport.frontendServiceName" . }}, port: {{ .Values.frontend.service.port }}}
+{{- end }}

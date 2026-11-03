@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HELM_VERSION: v4.3.1
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: starport_test
+          POSTGRES_USER: starport
+          POSTGRES_PASSWORD: starport
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U starport -d starport_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      STARPORT_TEST_DATABASE: Host=127.0.0.1;Port=5432;Database=starport_test;Username=starport;Password=starport
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore Starport.sln
+      - run: dotnet build Starport.sln --configuration Release --no-restore
+      - run: dotnet test Starport.Tests/Starport.Tests.csproj --configuration Release --no-build
+      - run: dotnet tool restore
+        working-directory: .
+      - run: dotnet ef migrations has-pending-model-changes --project backend/Starport.Infrastructure --startup-project backend/Starport.Infrastructure --context StarportDbContext
+        working-directory: .
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: spa/starport
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: spa/starport/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  docker:
+    name: Docker build (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend, processor]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/${{ matrix.component }}.Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,scope=${{ matrix.component }},mode=max
+
+  helm:
+    name: Helm lint and rendering
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - run: helm lint charts/starport --strict --set externalDatabase.host=example.test
+      - run: helm template starport charts/starport --namespace starport --set externalDatabase.host=example.test > /dev/null
+      - name: Game content route requires explicit domain
+        run: |
+          if helm template starport charts/starport --namespace starport --set externalDatabase.host=example.test --set gameContent.enabled=true; then
+            echo 'Game content route rendered without a root domain' >&2
+            exit 1
+          fi
+          helm template starport charts/starport --namespace starport --set externalDatabase.host=example.test \
+            --set gameContent.enabled=true --set gameContent.rootDomain=games.example.test > /tmp/starport-content.yaml
+          grep -q 'starport-game-content' /tmp/starport-content.yaml
+          grep -Fq '"*.games.example.test"' /tmp/starport-content.yaml
+
+  release-version:
+    name: Release version format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: .github/scripts/release-version-test.sh

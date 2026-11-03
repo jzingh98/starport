@@ -1,0 +1,118 @@
+# Starport frontend server.
+#
+# The nginx image entrypoint renders this template into /etc/nginx/conf.d/ at
+# startup. Only API_UPSTREAM, CSP_* and NGINX_LOCAL_RESOLVERS are substituted
+# (see NGINX_ENVSUBST_FILTER in the Dockerfile); every other $name below is an
+# nginx variable.
+
+# API_UPSTREAM reduced to scheme://host[:port]. Any path is dropped, because a
+# proxy_pass URL built from a variable replaces the request URI. Empty means
+# the /api/ proxy is disabled and those paths return 404.
+map "${API_UPSTREAM}" $starport_api_upstream {
+    "~^(?<api_base>https?://[^/]+)" $api_base;
+    default                      "";
+}
+
+# Keep the scheme and host a TLS-terminating proxy in front of us reported.
+map $http_x_forwarded_proto $starport_forwarded_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+map $http_x_forwarded_host $starport_forwarded_host {
+    default $http_x_forwarded_host;
+    ""      $http_host;
+}
+
+# Strict default policy plus the extra sources from CSP_*_SRC. The SPA has no
+# inline scripts. style-src needs 'unsafe-inline' because Angular injects
+# component styles at runtime; style-src and font-src also allow the Google
+# Fonts the SPA loads. img-src allows https: for user avatars from identity
+# providers.
+map "" $starport_csp {
+    default "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; script-src 'self' ${CSP_SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' ${CSP_CONNECT_SRC}; frame-src 'self' ${CSP_FRAME_SRC}; worker-src 'self' blob:; manifest-src 'self'";
+}
+
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    server_tokens off;
+    absolute_redirect off;
+
+    # Access tokens carry the workspaces claim (one product's entitlements for
+    # up to 50 workspaces), which can make the Authorization header about
+    # 12 KB, past nginx's default 8k per header line (the request would get a
+    # 400). 32k leaves room; Kestrel behind this accepts 64 KB of headers.
+    large_client_header_buffers 4 32k;
+
+    # Used when proxy_pass resolves API_UPSTREAM at request time, so a
+    # restarted backend container with a new IP is picked up.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+    resolver_timeout 5s;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/javascript application/javascript application/json application/manifest+json image/svg+xml;
+
+    # Probe endpoint for this container.
+    location = /health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Backend routes when API_UPSTREAM is set (compose, or Kubernetes without
+    # an Ingress/HTTPRoute). /health/ is proxied too so the stack can be
+    # checked through this port; the backend only reports statuses there. The
+    # chart's Ingress and HTTPRoute route /api only.
+    # Only the ZIP upload endpoint accepts game packages. nginx's 257 MiB
+    # limit leaves room above the API's 256 MiB body cap; every other API
+    # route stays at 16 MiB. Regex locations are ordered before static-file
+    # rules so API paths cannot be mistaken for hashed assets.
+    location ~ ^/api/workspaces/[^/]+/games/[0-9a-fA-F-]+/uploads/?$ {
+        client_max_body_size 257m;
+        include /etc/nginx/snippets/api-proxy.conf;
+    }
+    location ~ ^/api/ {
+        client_max_body_size 16m;
+        include /etc/nginx/snippets/api-proxy.conf;
+    }
+    location ^~ /health/ {
+        access_log off;
+        include /etc/nginx/snippets/api-proxy.conf;
+    }
+
+    # Hashed build output (main-ABCD1234.js, chunk-*.js, styles-*.css,
+    # media/*) never changes, so it is cached for a year.
+    location ~ "^/(?:.+/)?[^/]+-[A-Z0-9]{8}\.[A-Za-z0-9]+$" {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    # The app shell is never cached, so a new release is picked up at once.
+    location = /index.html {
+        add_header Cache-Control "no-store" always;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    location = /favicon.ico {
+        access_log off;
+        log_not_found off;
+        try_files $uri =404;
+    }
+
+    # Other static files are revalidated; unknown paths are client-side
+    # routes (/projects/..., /auth/callback, /signin) and fall back to the
+    # app shell.
+    location / {
+        try_files $uri /index.html;
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+}

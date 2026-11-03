@@ -1,0 +1,74 @@
+{{- if eq .Values.database.migrate "job" }}
+{{- if .Values.database.migrationJob.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "starport.migrateAccountName" . }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    {{- with .Values.database.migrationJob.serviceAccount.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "starport.fullname" . }}-migrate
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "starport.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      serviceAccountName: {{ include "starport.migrateAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "starport.backendImage" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - {name: ASPNETCORE_ENVIRONMENT, value: {{ .Values.config.environment | quote }}}
+            - {name: Database__Migrate, value: "only"}
+            {{- include "starport.databaseEnv" . | nindent 12 }}
+            - {name: Auth__Mode, value: {{ .Values.config.auth.mode | quote }}}
+            - {name: Auth__Oidc__Authority, value: {{ .Values.config.auth.oidc.authority | quote }}}
+            - {name: Auth__Oidc__Audience, value: {{ .Values.config.auth.oidc.audience | quote }}}
+            - {name: Workspaces__Source, value: {{ .Values.config.workspaces.source | quote }}}
+            {{- if eq .Values.config.workspaces.source "accounts" }}
+            - {name: Accounts__BaseUrl, value: {{ .Values.config.accounts.baseUrl | quote }}}
+            - {name: Accounts__TokenUrl, value: {{ .Values.config.accounts.tokenUrl | quote }}}
+            - {name: Accounts__ClientId, value: {{ .Values.config.accounts.clientId | quote }}}
+            - name: Accounts__ClientSecret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.accountsClientSecretKey }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.database.migrationJob.resources | nindent 12 }}
+{{- end }}

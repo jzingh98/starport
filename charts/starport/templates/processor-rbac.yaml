@@ -1,0 +1,29 @@
+{{- if and .Values.processor.enabled .Values.processingWorker.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "starport.fullname" . }}-processing-jobs
+  namespace: {{ required "processor.serviceAccount.namespace is required" .Values.processor.serviceAccount.namespace }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, watch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "starport.fullname" . }}-processing-jobs
+  namespace: {{ .Values.processor.serviceAccount.namespace }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "starport.fullname" . }}-processing-jobs
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "starport.processingWorkerAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,14 @@
+.git/
+.github/
+charts/
+docs/
+**/bin/
+**/obj/
+**/TestResults/
+**/node_modules/
+**/dist/
+**/.angular/
+**/coverage/
+**/.env
+**/.env.*
+**/appsettings.Development.json

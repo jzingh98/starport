@@ -1,0 +1,167 @@
+global:
+  imageRegistry: ghcr.io
+  imagePullSecrets: []
+image:
+  repositoryPrefix: jzingh98
+  tag: ""
+  pullPolicy: IfNotPresent
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+frontendServiceAccount:
+  create: true
+  name: ""
+delivery:
+  # Reserved identity for the release reader. No delivery workload is shipped yet.
+  serviceAccount:
+    create: false
+    name: ""
+    annotations: {}
+processor:
+  # Untrusted Godot processing runs as one-upload Jobs in a restricted namespace.
+  enabled: false
+  # Set to a registry digest (repository@sha256:...) before enabling Jobs.
+  image: ""
+  serviceAccount:
+    create: false
+    namespace: ""
+    name: ""
+  quota:
+    activeJobs: 4
+    pods: 4
+    requestsCpu: "4"
+    requestsMemory: 8Gi
+    limitsMemory: 8Gi
+processingWorker:
+  # Trusted dispatcher. The public API never mounts a Kubernetes token.
+  enabled: false
+  replicaCount: 1
+  serviceAccount:
+    create: false
+    name: ""
+    annotations: {}
+  resources:
+    requests: {cpu: 100m, memory: 384Mi, ephemeral-storage: 1Gi}
+    limits: {memory: 1Gi, ephemeral-storage: 2Gi}
+  scratchSizeLimit: 1600Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: [ALL]
+
+config:
+  environment: Production
+  publicUrl: ""
+  auth:
+    mode: oidc
+    oidc:
+      authority: ""
+      audience: starport
+      clientId: starport
+  workspaces:
+    source: local
+  reconciliation:
+    enabled: false
+  accounts:
+    baseUrl: ""
+    tokenUrl: ""
+    clientId: ""
+    publicUrl: ""
+  forwardedHeaders:
+    knownNetworks: []
+    forwardLimit: 1
+  # Reserved by Jagveer deploy/env values; Starport does not use AI.
+  ai:
+    projectId: ""
+  csp:
+    connectSrc: ""
+    frameSrc: ""
+  storage:
+    mode: local
+    uploadBucket: ""
+    releaseBucket: ""
+    saveBucket: ""
+  processing:
+    mode: disabled
+
+gameContent:
+  # Enable only when the backend's content-only host handler is deployed.
+  enabled: false
+  parentDomain: ""
+  hostLabelPrefix: g-
+  rootDomain: ""
+  scheme: https
+  appOrigin: ""
+
+# The chart reads only the keys listed here from a pre-existing Secret. Hosted
+# Jagveer uses an ExternalSecret; local operators can create a Kubernetes Secret.
+secrets:
+  existingSecret: starport-secrets
+  databasePasswordKey: database-password
+  accountsClientSecretKey: accounts-client-secret
+
+externalDatabase:
+  host: ""
+  port: 5432
+  name: starport
+  username: starport
+  maxPoolSize: 4
+  sslMode: Require
+
+database:
+  migrate: job
+  migrationJob:
+    serviceAccount:
+      create: true
+      name: ""
+      annotations: {}
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {memory: 1Gi}
+
+backend:
+  replicaCount: 1
+  service:
+    port: 8080
+  resources:
+    requests: {cpu: 100m, memory: 384Mi, ephemeral-storage: 600Mi}
+    limits: {memory: 1Gi, ephemeral-storage: 1Gi}
+  scratchSizeLimit: 600Mi
+  topologySpreadConstraints: []
+frontend:
+  replicaCount: 1
+  service:
+    port: 8080
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}
+  topologySpreadConstraints: []
+
+httpRoute:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+  annotations: {}
+networkPolicy:
+  enabled: true
+  ingressFrom: []
+  # Trusted API pods need Accounts, identity discovery, and Cloud SQL access.
+  # Untrusted game code must never run in this namespace.
+  allowExternalEgress: true
+  extraEgress: []
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+extraObjects: []

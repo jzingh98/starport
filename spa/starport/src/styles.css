@@ -1,0 +1,9 @@
+@import 'tailwindcss';
+@import './styles/kit.css';
+
+:root {
+  --accent: #e9c86b;
+  --accent-hover: #f6dc8d;
+  --on-accent: #101218;
+  --accent-fg: #f0d888;
+}

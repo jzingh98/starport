@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Starport bridge isolation test host</title>
+  <style>
+    body { font: 16px system-ui; margin: 2rem; background: #141923; color: #f3f5f9; }
+    button, input { font: inherit; padding: .55rem .8rem; margin: .3rem; }
+    input { width: min(40rem, 80vw); }
+    iframe { width: 100%; height: 650px; border: 2px solid #e9c86b; margin-top: 1rem; }
+    #log { white-space: pre-wrap; font: 13px ui-monospace, monospace; max-height: 12rem; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>Starport bridge isolation test</h1>
+  <p>Serve this page on localhost and the Godot export on 127.0.0.1 to make the iframe cross-site. Open two host tabs to test save conflicts.</p>
+  <label for="game-url">Game URL</label>
+  <input id="game-url" value="http://127.0.0.1:8001/index.html">
+  <button id="launch">Launch</button>
+  <button id="invalidate">Invalidate launch</button>
+  <p id="log" role="status"></p>
+  <iframe id="game" title="Untrusted Godot game" sandbox="allow-scripts allow-same-origin allow-pointer-lock" referrerpolicy="no-referrer"></iframe>
+  <script>
+    // Test-only parent. Production must resolve live game/player access for every request.
+    const frame = document.getElementById('game');
+    const log = document.getElementById('log');
+    const storageKey = 'starport-demo-saves-v1';
+    const readSaves = () => new Map(Object.entries(JSON.parse(localStorage.getItem(storageKey) || '{}')));
+    const writeSaves = (saves) => localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(saves)));
+    const idempotency = new Map();
+    let gameOrigin = null;
+    let nonce = null;
+    const protocol = 'starport.bridge';
+    const methods = new Set(['loadSave', 'save', 'listSlots', 'deleteSave', 'capabilities']);
+    const writeLog = (message) => { log.textContent = `${message}\n${log.textContent}`; };
+    const reply = (id, result, error) => frame.contentWindow.postMessage({
+      protocol, version: 1, type: 'response', id, nonce, ok: !error,
+      ...(error ? { error } : { result }),
+    }, gameOrigin);
+    const fail = (id, code, message) => reply(id, null, { code, message });
+
+    document.getElementById('launch').addEventListener('click', () => {
+      const url = new URL(document.getElementById('game-url').value);
+      if (url.hostname === location.hostname) return writeLog('Use a different hostname for the game.');
+      gameOrigin = url.origin;
+      nonce = crypto.randomUUID().replaceAll('-', '');
+      url.hash = new URLSearchParams({ starport_origin: location.origin, starport_nonce: nonce });
+      frame.src = url.href;
+      writeLog(`Launched ${url.origin} with a new nonce.`);
+    });
+    document.getElementById('invalidate').addEventListener('click', () => {
+      if (!gameOrigin || !nonce) return;
+      frame.contentWindow.postMessage({ protocol, version: 1, type: 'invalidate', nonce }, gameOrigin);
+      nonce = null;
+      writeLog('Launch invalidated. Further saves must fail.');
+    });
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      // Every check here is mandatory for the trusted production parent too.
+      if (!nonce || event.source !== frame.contentWindow || event.origin !== gameOrigin ||
+          !message || typeof message !== 'object' || message.protocol !== protocol ||
+          message.version !== 1 || message.type !== 'request' || message.nonce !== nonce ||
+          typeof message.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(message.id) ||
+          !methods.has(message.method) || !message.payload || typeof message.payload !== 'object' ||
+          JSON.stringify(message).length > 1_200_000) return;
+      const { id, method, payload } = message;
+      const saves = readSaves();
+      const slot = payload.slot;
+      if (method !== 'capabilities' && method !== 'listSlots' &&
+          (typeof slot !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(slot)))
+        return fail(id, 'invalid-request', 'Invalid slot');
+      if (method === 'capabilities') return reply(id, { canSave: true, maxSlots: 5 });
+      if (method === 'listSlots') return reply(id, [...saves].map(([name, save]) => ({
+        slot: name, revision: save.revision, updatedAt: save.updatedAt,
+      })));
+      const current = saves.get(slot);
+      if (method === 'loadSave') {
+        writeLog(`Loaded ${slot}: ${current?.revision ?? 'empty'}.`);
+        return reply(id, current ?? null);
+      }
+      if (method === 'save') {
+        if (!payload.data || typeof payload.data !== 'object')
+          return fail(id, 'invalid-request', 'Save data must be an object');
+        const key = payload.requestKey;
+        if (key && idempotency.has(key)) return reply(id, idempotency.get(key));
+        if ((current?.revision ?? null) !== (payload.expectedRevision ?? null)) {
+          writeLog(`Conflict on ${slot}.`);
+          return fail(id, 'conflict', 'The slot changed on another device');
+        }
+        if (!current && saves.size >= 5) return fail(id, 'quota-exceeded', 'Five slots are already in use');
+        const saved = { data: payload.data, revision: crypto.randomUUID(), updatedAt: new Date().toISOString() };
+        saves.set(slot, saved);
+        writeSaves(saves);
+        const result = { revision: saved.revision, updatedAt: saved.updatedAt };
+        if (key) idempotency.set(key, result);
+        writeLog(`Saved ${slot} at ${saved.revision}.`);
+        return reply(id, result);
+      }
+      if ((current?.revision ?? null) !== payload.expectedRevision)
+        return fail(id, 'conflict', 'The slot changed on another device');
+      saves.delete(slot);
+      writeSaves(saves);
+      reply(id, { deleted: true });
+    });
+  </script>
+</body>
+</html>

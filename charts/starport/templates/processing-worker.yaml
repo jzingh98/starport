@@ -1,0 +1,83 @@
+{{- if .Values.processingWorker.enabled }}
+{{- if not .Values.processor.enabled }}{{ fail "processingWorker.enabled requires processor.enabled" }}{{ end }}
+{{- if ne .Values.config.storage.mode "gcs" }}{{ fail "processingWorker.enabled requires config.storage.mode=gcs" }}{{ end }}
+{{- if ne .Values.config.processing.mode "job" }}{{ fail "processingWorker.enabled requires config.processing.mode=job" }}{{ end }}
+{{- if not (regexMatch "^.+@sha256:[0-9a-f]{64}$" .Values.processor.image) }}{{ fail "processor.image must be pinned to a sha256 registry digest" }}{{ end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "starport.fullname" . }}-processing-worker
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+    app.kubernetes.io/component: processing-worker
+spec:
+  replicas: {{ .Values.processingWorker.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: processing-worker
+  template:
+    metadata:
+      labels:
+        {{- include "starport.labels" . | nindent 8 }}
+        app.kubernetes.io/component: processing-worker
+    spec:
+      serviceAccountName: {{ include "starport.processingWorkerAccountName" . }}
+      automountServiceAccountToken: true
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: scratch
+          emptyDir: {sizeLimit: {{ .Values.processingWorker.scratchSizeLimit | quote }}}
+      containers:
+        - name: worker
+          image: {{ include "starport.backendImage" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - {name: scratch, mountPath: /tmp}
+          env:
+            - {name: ASPNETCORE_ENVIRONMENT, value: {{ .Values.config.environment | quote }}}
+            - {name: Database__Migrate, value: "skip"}
+            {{- include "starport.databaseEnv" . | nindent 12 }}
+            - {name: Auth__Mode, value: {{ .Values.config.auth.mode | quote }}}
+            - {name: Auth__Oidc__Authority, value: {{ .Values.config.auth.oidc.authority | quote }}}
+            - {name: Auth__Oidc__Audience, value: {{ .Values.config.auth.oidc.audience | quote }}}
+            - {name: Auth__Oidc__ClientId, value: {{ .Values.config.auth.oidc.clientId | quote }}}
+            - {name: Workspaces__Source, value: {{ .Values.config.workspaces.source | quote }}}
+            - {name: Reconciliation__Enabled, value: "false"}
+            - {name: Processing__Mode, value: "job"}
+            - {name: Processing__WorkerEnabled, value: "true"}
+            - {name: Processing__Namespace, value: {{ .Values.processor.serviceAccount.namespace | quote }}}
+            - {name: Processing__InstanceName, value: {{ .Release.Name | quote }}}
+            - {name: Processing__JobServiceAccount, value: {{ .Values.processor.serviceAccount.name | quote }}}
+            - {name: Processing__Image, value: {{ .Values.processor.image | quote }}}
+            {{- include "starport.storageEnv" . | nindent 12 }}
+            {{- if eq .Values.config.workspaces.source "accounts" }}
+            - {name: Accounts__BaseUrl, value: {{ .Values.config.accounts.baseUrl | quote }}}
+            - {name: Accounts__TokenUrl, value: {{ .Values.config.accounts.tokenUrl | quote }}}
+            - {name: Accounts__ClientId, value: {{ .Values.config.accounts.clientId | quote }}}
+            - name: Accounts__ClientSecret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.accountsClientSecretKey }}
+            {{- end }}
+          startupProbe:
+            httpGet: {path: /health/live, port: 8080}
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /health/live, port: 8080}
+            periodSeconds: 15
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.processingWorker.resources | nindent 12 }}
+{{- end }}

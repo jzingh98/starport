@@ -1,0 +1,39 @@
+{{- if .Values.processor.enabled }}
+# Defense in depth. Jagveer also owns a namespace-wide default-deny policy.
+# Only public HTTPS signed object capabilities are reachable. No metadata
+# server, private VPC, pod/service ranges, Accounts, Cloud SQL or API access.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "starport.fullname" . }}-processor
+  namespace: {{ required "processor.serviceAccount.namespace is required" .Values.processor.serviceAccount.namespace }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: processor
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7
+              - fe80::/10
+      ports:
+        - {protocol: TCP, port: 443}
+{{- end }}

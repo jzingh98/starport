@@ -1,0 +1,43 @@
+{{- if .Values.httpRoute.enabled }}
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: {{ include "starport.backendServiceName" . }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+spec:
+  default:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /health/live
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ include "starport.backendServiceName" . }}
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: {{ include "starport.frontendServiceName" . }}
+  labels:
+    {{- include "starport.labels" . | nindent 4 }}
+spec:
+  default:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /health
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ include "starport.frontendServiceName" . }}
+{{- end }}

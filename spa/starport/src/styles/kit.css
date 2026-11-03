@@ -1,0 +1,460 @@
+/*
+ * UI kit: the design language shared by Arxtic, Biostox and Chaox (and the hosted services around them).
+ * Shared file: identical in every product that has it. Change all the copies together. A product only sets its
+ * accent (the --accent-* variables) in its own styles.css, after importing Tailwind and this file.
+ *
+ *   @import 'tailwindcss';
+ *   @import './styles/kit.css';
+ *   :root { --accent: …; --accent-hover: …; --on-accent: …; --accent-fg: …; }
+ *
+ * Tokens become Tailwind colours (bg-surface, text-fg-2, border-line, bg-accent, text-accent-fg, …). Components
+ * are utilities (btn btn-primary, input, card, badge badge-success, dialog, menu, tabs, …), so they take variants
+ * (hover:, md:) and only what a page uses is built.
+ */
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* Surfaces, darkest first. */
+  --color-canvas: #080b11;
+  --color-surface: #0d1219;
+  --color-surface-2: #131a24;
+  --color-surface-3: #19212d;
+
+  /* Borders. */
+  --color-line: rgb(148 163 184 / 0.14);
+  --color-line-strong: rgb(148 163 184 / 0.28);
+
+  /* Text: primary, secondary, muted (meta), faint (placeholders, disabled). */
+  --color-fg: #e6ebf2;
+  --color-fg-2: #a9b4c4;
+  --color-fg-3: #7c889b;
+  --color-fg-4: #6b7789;
+
+  /* The product's accent (set per product on :root). */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: color-mix(in srgb, var(--accent-fg) 12%, transparent);
+  --color-accent-line: color-mix(in srgb, var(--accent-fg) 36%, transparent);
+
+  /* Status. -fg is text on dark; the plain colour is for fills and tints. */
+  --color-success: #10b981;
+  --color-success-fg: #4ade80;
+  --color-warning: #f59e0b;
+  --color-warning-fg: #fbbf24;
+  --color-danger: #dc2626;
+  --color-danger-fg: #f87171;
+  --color-info: #3b82f6;
+  --color-info-fg: #60a5fa;
+
+  --shadow-pop: 0 18px 50px -12px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.02);
+
+  --animate-enter: kit-enter 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  --animate-fade: kit-fade 0.18s ease-out backwards;
+
+  @keyframes kit-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @keyframes kit-fade {
+    from {
+      opacity: 0;
+    }
+  }
+}
+
+/* Fallback accent (neutral) for a product that hasn't set one. */
+:root {
+  --accent: #e6ebf2;
+  --accent-hover: #ffffff;
+  --on-accent: #0b0f15;
+  --accent-fg: #9fb4d0;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    /* A gradient too faint to see, not a flat colour: Chrome on macOS can draw a tile that holds nothing
+     but a flat background as a plain colour layer, and on some displays that layer isn't colour-managed,
+     so empty bands of the page came out darker than the rest. */
+    background: var(--color-canvas)
+      linear-gradient(var(--color-canvas), color-mix(in srgb, var(--color-canvas) 97%, #000));
+    /* No elastic bounce past the page's ends: macOS showed a different background there. */
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    /* The canvas comes from html; an opaque body would cover its gradient. */
+    background: transparent;
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent-fg) 30%, transparent);
+    color: #fff;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent-fg);
+    outline-offset: 2px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(148 163 184 / 0.22) transparent;
+  }
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ─── Layout ─────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/* A page's content column. Every page in a product uses it, so edges line up with the app bar. */
+@utility page {
+  @apply mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8;
+}
+/*
+ * Forms and settings pages: the same full column as every other page (so the header's actions sit in the
+ * same place on every page), with form fields kept to a readable width.
+ */
+@utility page-narrow {
+  @apply [&_.input]:max-w-xl [&_.select]:max-w-xl [&_.textarea]:max-w-2xl;
+}
+@utility page-header {
+  @apply mb-8 flex flex-wrap items-start justify-between gap-x-6 gap-y-4;
+}
+@utility page-title {
+  @apply font-display text-2xl font-semibold tracking-tight text-fg sm:text-[1.75rem] sm:leading-9;
+}
+@utility page-subtitle {
+  @apply mt-1 text-sm text-fg-2;
+}
+@utility page-actions {
+  @apply flex flex-wrap items-center gap-2;
+}
+@utility section {
+  @apply mt-10 first:mt-0;
+}
+@utility section-header {
+  @apply mb-4 flex flex-wrap items-center justify-between gap-3;
+}
+@utility section-title {
+  @apply font-display text-base font-semibold text-fg;
+}
+@utility eyebrow {
+  @apply text-[11px] font-semibold tracking-[0.08em] text-fg-3 uppercase;
+}
+@utility divider {
+  @apply h-px w-full bg-line;
+}
+@utility breadcrumb {
+  @apply mb-3 flex flex-wrap items-center gap-1.5 text-[13px] text-fg-3 [&_a]:transition-colors [&_a:hover]:text-fg;
+}
+
+/* ─── App bar (the product shell) ────────────────────────────────────────────────────────────────────────── */
+
+/* Opaque on purpose: a backdrop-filter here would trap the position:fixed dialogs opened from the bar. */
+@utility appbar {
+  @apply sticky top-0 z-40 border-b border-line bg-canvas;
+}
+@utility appbar-inner {
+  @apply mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-4 sm:px-6 lg:px-8;
+}
+@utility appbar-brand {
+  @apply flex shrink-0 items-center gap-2.5 rounded-lg font-display text-[15px] font-semibold text-fg;
+}
+@utility nav-link {
+  @apply inline-flex h-8 items-center rounded-md px-3 text-sm whitespace-nowrap text-fg-2 transition-colors hover:bg-surface-2 hover:text-fg;
+}
+@utility nav-link-active {
+  @apply bg-surface-2 text-fg;
+}
+@utility app-footer {
+  @apply mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-line px-4 py-6 text-xs text-fg-3 sm:px-6 lg:px-8 [&_a]:transition-colors [&_a:hover]:text-fg;
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/* aria-disabled buttons stay clickable (to explain why they're unavailable); aria-disabled links don't navigate. */
+@utility btn {
+  @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-transparent px-4 text-sm font-medium whitespace-nowrap transition-colors select-none disabled:cursor-not-allowed disabled:opacity-45 aria-disabled:opacity-45 [a&]:aria-disabled:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0;
+}
+@utility btn-sm {
+  @apply h-8 gap-1.5 px-3 text-[13px];
+}
+@utility btn-lg {
+  @apply h-11 px-5 text-[15px];
+}
+@utility btn-icon {
+  @apply w-9 px-0;
+}
+@utility btn-primary {
+  @apply bg-accent text-on-accent hover:enabled:bg-accent-hover [a&]:hover:bg-accent-hover;
+}
+@utility btn-secondary {
+  @apply border-line bg-surface-2 text-fg hover:enabled:border-line-strong hover:enabled:bg-surface-3 [a&]:hover:border-line-strong [a&]:hover:bg-surface-3;
+}
+@utility btn-ghost {
+  @apply text-fg-2 hover:enabled:bg-surface-2 hover:enabled:text-fg [a&]:hover:bg-surface-2 [a&]:hover:text-fg;
+}
+/* Destructive, final: confirm buttons in dialogs. */
+@utility btn-danger {
+  @apply bg-danger text-white hover:enabled:bg-red-500 [a&]:hover:bg-red-500;
+}
+/* Destructive, first step: "Delete project" on a page, which then asks to confirm. */
+@utility btn-danger-subtle {
+  @apply border-danger-fg/25 text-danger-fg hover:enabled:border-danger-fg/45 hover:enabled:bg-danger/10;
+}
+@utility link {
+  @apply font-medium text-accent-fg underline-offset-2 hover:underline;
+}
+
+/* ─── Forms ──────────────────────────────────────────────────────────────────────────────────────────────── */
+
+@utility input {
+  @apply block h-9 w-full min-w-0 rounded-lg border border-line bg-surface-2 px-3 text-sm text-fg transition-[border-color,box-shadow] outline-none placeholder:text-fg-4 hover:border-line-strong focus:border-accent-line focus:ring-3 focus:ring-accent-soft disabled:cursor-not-allowed disabled:opacity-55 aria-invalid:border-danger-fg/50;
+}
+@utility textarea {
+  @apply input h-auto min-h-24 py-2 leading-relaxed;
+}
+@utility select {
+  @apply input appearance-none bg-[url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2020%2020'%20fill='%237c889b'%3E%3Cpath%20fill-rule='evenodd'%20d='M5.23%207.21a.75.75%200%20011.06.02L10%2011.17l3.71-3.94a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z'%20clip-rule='evenodd'/%3E%3C/svg%3E")] bg-[length:1rem] bg-[position:right_0.6rem_center] bg-no-repeat pr-9;
+}
+@utility checkbox {
+  @apply size-4 shrink-0 rounded border-line-strong bg-surface-2 accent-[var(--accent)];
+}
+@utility label {
+  @apply mb-1.5 block text-[13px] font-medium text-fg-2;
+}
+@utility hint {
+  @apply mt-1.5 text-xs text-fg-3;
+}
+@utility field-error {
+  @apply mt-1.5 text-xs text-danger-fg;
+}
+@utility field {
+  @apply [&+&]:mt-5;
+}
+
+/* ─── Surfaces ───────────────────────────────────────────────────────────────────────────────────────────── */
+
+/* A bordered surface with no padding; card adds padding, card-flush clips its rows. */
+@utility panel {
+  @apply rounded-xl border border-line bg-surface;
+}
+@utility card {
+  @apply panel p-5;
+}
+@utility card-flush {
+  @apply panel overflow-hidden;
+}
+@utility card-interactive {
+  @apply transition-colors hover:border-line-strong hover:bg-surface-2;
+}
+@utility card-title {
+  @apply font-display text-[15px] font-semibold text-fg;
+}
+/* Rows inside a card-flush: a list of members, sources, runs. */
+@utility list-row {
+  @apply flex items-center gap-4 border-t border-line px-5 py-3.5 first:border-t-0;
+}
+
+/* ─── Feedback ───────────────────────────────────────────────────────────────────────────────────────────── */
+
+@utility badge {
+  @apply inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-line bg-surface-2 px-2 text-[11px] font-medium whitespace-nowrap text-fg-2;
+}
+@utility badge-accent {
+  @apply border-accent-line bg-accent-soft text-accent-fg;
+}
+@utility badge-success {
+  @apply border-success-fg/30 bg-success/12 text-success-fg;
+}
+@utility badge-warning {
+  @apply border-warning-fg/30 bg-warning/12 text-warning-fg;
+}
+@utility badge-danger {
+  @apply border-danger-fg/30 bg-danger/12 text-danger-fg;
+}
+@utility badge-info {
+  @apply border-info-fg/30 bg-info/12 text-info-fg;
+}
+
+/* A callout inside a page: "AI isn't configured", "You're a viewer", an error that keeps the page usable. */
+@utility notice {
+  @apply flex gap-3 rounded-xl border border-line bg-surface-2 p-4 text-sm text-fg-2 [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0;
+}
+@utility notice-info {
+  @apply border-info-fg/25 bg-info/8 [&>svg]:text-info-fg;
+}
+@utility notice-warning {
+  @apply border-warning-fg/25 bg-warning/8 [&>svg]:text-warning-fg;
+}
+@utility notice-danger {
+  @apply border-danger-fg/25 bg-danger/8 [&>svg]:text-danger-fg;
+}
+@utility notice-success {
+  @apply border-success-fg/25 bg-success/8 [&>svg]:text-success-fg;
+}
+
+@utility empty-state {
+  @apply flex flex-col items-center px-6 py-14 text-center;
+}
+@utility empty-icon {
+  @apply mb-4 grid size-11 place-items-center rounded-xl border border-line bg-surface-2 text-fg-3 [&_svg]:size-5;
+}
+@utility empty-title {
+  @apply font-display text-base font-semibold text-fg;
+}
+@utility empty-text {
+  @apply mt-1 max-w-sm text-sm text-fg-2;
+}
+
+/* Takes the text colour: text-accent-fg on a page, the button's colour inside a button. */
+@utility spinner {
+  @apply inline-block size-5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80;
+}
+@utility spinner-sm {
+  @apply size-4;
+}
+@utility skeleton {
+  @apply animate-pulse rounded-md bg-surface-2;
+}
+
+@utility stat-label {
+  @apply eyebrow;
+}
+@utility stat-value {
+  @apply mt-1 font-display text-2xl font-semibold text-fg tabular-nums;
+}
+
+/* ─── Navigation inside a page ───────────────────────────────────────────────────────────────────────────── */
+
+@utility tabs {
+  @apply -mx-4 flex gap-1 overflow-x-auto overflow-y-hidden border-b border-line px-4 sm:mx-0 sm:px-0;
+}
+@utility tab {
+  @apply -mb-px inline-flex h-10 shrink-0 items-center gap-2 border-b-2 border-transparent px-3 text-sm font-medium whitespace-nowrap text-fg-3 transition-colors hover:text-fg [&_svg]:size-4;
+}
+@utility tab-active {
+  @apply border-accent-fg text-fg;
+}
+/* A two- or three-way switch: Monthly/Yearly, Public/Mine. */
+@utility segmented {
+  @apply inline-flex items-center gap-0.5 rounded-lg border border-line bg-surface-2 p-0.5;
+}
+@utility segment {
+  @apply inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap text-fg-3 transition-colors hover:text-fg [&_svg]:size-3.5;
+}
+@utility segment-active {
+  @apply bg-surface-3 text-fg shadow-sm;
+}
+
+/* ─── Overlays ───────────────────────────────────────────────────────────────────────────────────────────── */
+
+@utility menu {
+  @apply absolute z-50 min-w-52 animate-fade rounded-xl border border-line bg-surface-3 p-1 shadow-pop;
+}
+@utility menu-item {
+  @apply flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-fg-2 transition-colors hover:bg-white/5 hover:text-fg [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-3;
+}
+@utility menu-label {
+  @apply px-3 pt-2 pb-1 eyebrow;
+}
+@utility menu-separator {
+  @apply mx-1 my-1 h-px bg-line;
+}
+
+/*
+ * Dialogs. Render the backdrop at the top of a component's template (not inside an element with a transform,
+ * filter or animation that keeps one, which would trap `position: fixed`).
+ */
+@utility dialog-backdrop {
+  @apply fixed inset-0 z-[100] flex animate-fade items-end justify-center bg-black/65 p-0 backdrop-blur-sm sm:items-center sm:p-4;
+}
+@utility dialog {
+  @apply flex max-h-[calc(100dvh-1rem)] w-full max-w-lg animate-enter flex-col rounded-t-2xl border border-line bg-surface-3 shadow-pop sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl;
+}
+@utility dialog-header {
+  @apply flex items-start justify-between gap-4 px-5 pt-5;
+}
+@utility dialog-title {
+  @apply font-display text-lg font-semibold text-fg;
+}
+@utility dialog-body {
+  @apply overflow-y-auto px-5 py-5;
+}
+@utility dialog-footer {
+  @apply flex flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-4;
+}
+
+@utility toast {
+  @apply pointer-events-auto flex w-full max-w-sm animate-enter items-start gap-3 rounded-xl border border-line bg-surface-3 p-3.5 text-sm text-fg shadow-pop [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0;
+}
+
+/* ─── Data ───────────────────────────────────────────────────────────────────────────────────────────────── */
+
+@utility table-wrap {
+  @apply -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0;
+}
+@utility data-table {
+  @apply w-full border-collapse text-left text-sm [&_th]:border-b [&_th]:border-line [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-xs [&_th]:font-medium [&_th]:whitespace-nowrap [&_th]:text-fg-3 [&_td]:border-b [&_td]:border-line [&_td]:px-3 [&_td]:py-3 [&_td]:align-middle [&_tr:last-child_td]:border-b-0;
+}
+@utility avatar {
+  @apply grid size-8 shrink-0 place-items-center overflow-hidden rounded-full bg-accent-soft text-xs font-semibold text-accent-fg ring-1 ring-accent-line;
+}
+@utility code {
+  @apply rounded-md border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[0.85em] text-fg;
+}
+@utility kbd {
+  @apply rounded border border-line bg-surface-2 px-1.5 font-mono text-[11px] text-fg-3;
+}
+@utility mono {
+  @apply font-mono text-[0.92em] tabular-nums;
+}
+
+/* ─── Startup error (rendered by main.ts outside Angular when /api/config can't be loaded) ───────────────── */
+
+@layer components {
+  .startup-error {
+    @apply flex min-h-screen items-center justify-center p-6;
+  }
+  .startup-error__card {
+    @apply card w-full max-w-md p-8 text-center;
+  }
+  .startup-error__title {
+    @apply mb-2 font-display text-xl font-semibold text-fg;
+  }
+  .startup-error__message {
+    @apply mb-4 text-sm text-fg-2;
+  }
+  .startup-error__detail {
+    @apply mb-6 font-mono text-xs break-words text-fg-3;
+  }
+  .startup-error__retry {
+    @apply btn btn-primary;
+  }
+}

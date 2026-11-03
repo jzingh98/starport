@@ -1,0 +1,268 @@
+name: Release
+
+# Pushes to main publish amd64 images tagged `sha-<7>`, and move `main` to
+# them while that commit is still the branch head.
+# A tag vX.Y.Z or vX.Y.Z-<pre-release> on main publishes, in lockstep and at
+# that version: multi-arch images with SBOM and provenance, the Helm chart to
+# oci://ghcr.io/<owner>/charts, and a GitHub Release. Final versions also move
+# `X.Y` and `latest`; pre-releases never do.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+# Branch pushes get one group per commit. GitHub keeps at most one pending run
+# per group and cancels older pending ones, so a shared `main` group would drop
+# the runs (and the sha-<7> images) of commits pushed in quick succession.
+# Tag pushes get one group per tag, so re-pushing a tag waits for the earlier
+# run. Because main runs now overlap, the moving `main` tag is applied by its
+# own job (main-tag) that checks the commit is still the branch head.
+concurrency:
+  group: release-${{ github.ref_type == 'tag' && github.ref || github.sha }}
+  cancel-in-progress: false
+
+env:
+  HELM_VERSION: v4.3.1
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      release: ${{ steps.resolve.outputs.release }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      owner: ${{ steps.resolve.outputs.owner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Tags vX.Y.Z[-PRERELEASE] give X.Y.Z[-PRERELEASE]; main gives
+      # 0.0.0-main.sha-<sha7>. The logic lives in a script so CI can test it
+      # (.github/scripts/release-version-test.sh).
+      - id: resolve
+        name: Resolve version from the ref
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            if ! resolved=$(.github/scripts/release-version.sh tag "$GITHUB_REF_NAME"); then
+              echo "::error::Tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-PRERELEASE (SemVer)"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::Release tags must point to a commit on main"
+              exit 1
+            fi
+          else
+            resolved=$(.github/scripts/release-version.sh branch "$GITHUB_SHA")
+          fi
+          {
+            echo "$resolved"
+            echo "owner=${GITHUB_REPOSITORY_OWNER,,}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved: $(tr '\n' ' ' <<<"$resolved")" >> "$GITHUB_STEP_SUMMARY"
+
+  images:
+    name: Image (${{ matrix.component }})
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            description: Starport API
+          - component: frontend
+            description: Starport web app (Angular SPA served by nginx)
+          - component: processor
+            description: Isolated Godot archive processor
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      RELEASE: ${{ needs.version.outputs.release }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only the small runtime steps run emulated: both Dockerfiles build on
+      # the runner's platform and cross-compile for arm64.
+      - if: env.RELEASE == 'true'
+        uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        env:
+          # Index annotations need an image index. Release builds are
+          # multi-platform (an index); main builds are a single amd64 manifest,
+          # where buildx rejects index annotations.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: ${{ env.RELEASE == 'true' && 'manifest,index' || 'manifest' }}
+        with:
+          images: ghcr.io/${{ needs.version.outputs.owner }}/starport-${{ matrix.component }}
+          flavor: latest=false
+          # `main` is moved by the main-tag job, not here.
+          tags: |
+            type=sha,prefix=sha-,format=short,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ env.VERSION }},enable=${{ env.RELEASE == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ env.RELEASE == 'true' && env.PRERELEASE == 'false' }}
+            type=raw,value=latest,enable=${{ env.RELEASE == 'true' && env.PRERELEASE == 'false' }}
+          labels: |
+            org.opencontainers.image.title=starport-${{ matrix.component }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+          annotations: |
+            org.opencontainers.image.title=starport-${{ matrix.component }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/${{ matrix.component }}.Dockerfile
+          platforms: ${{ env.RELEASE == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            REVISION=${{ github.sha }}
+          sbom: ${{ env.RELEASE == 'true' }}
+          provenance: ${{ env.RELEASE == 'true' && 'mode=max' || 'false' }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,scope=${{ matrix.component }},mode=max
+
+  main-tag:
+    name: Move the main tag
+    needs: [version, images]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    env:
+      OWNER: ${{ needs.version.outputs.owner }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Runs for different commits overlap (see `concurrency`), so an older run
+      # can finish last. Only the run for the current head of main moves the
+      # tag; an older one leaves it alone. The check runs right before the
+      # copy, and a newer commit's run can only get here after building its
+      # images, so a newer `main` is never overwritten by an older one.
+      - name: Point main at sha-<7> if this commit is still the head of main
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo "main is now at ${head::7}; leaving the main tag to that commit's run." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          for component in backend frontend processor; do
+            image="ghcr.io/${OWNER}/starport-${component}"
+            # A carbon copy: `main` gets the same manifest digest as sha-<7>.
+            docker buildx imagetools create --prefer-index=false \
+              --tag "${image}:main" "${image}:sha-${GITHUB_SHA::7}"
+          done
+          echo "main -> sha-${GITHUB_SHA::7}" >> "$GITHUB_STEP_SUMMARY"
+
+  chart:
+    name: Helm chart
+    needs: [version, images]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      OWNER: ${{ needs.version.outputs.owner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Package
+        run: helm package charts/starport --version "$VERSION" --app-version "$VERSION" --destination dist
+
+      - name: Push to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          helm push "dist/starport-${VERSION}.tgz" "oci://ghcr.io/${OWNER}/charts"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chart
+          path: dist/starport-${{ env.VERSION }}.tgz
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub Release
+    needs: [version, chart]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      OWNER: ${{ needs.version.outputs.owner }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: chart
+          path: dist
+
+      - name: Create release
+        run: |
+          set -euo pipefail
+          notes=$(cat <<EOF
+          ## Install
+
+          Helm:
+
+              helm install starport oci://ghcr.io/${OWNER}/charts/starport --version ${VERSION}
+
+          Images: \`ghcr.io/${OWNER}/starport-backend:${VERSION}\`, \`ghcr.io/${OWNER}/starport-frontend:${VERSION}\`, \`ghcr.io/${OWNER}/starport-processor:${VERSION}\`
+          EOF
+          )
+          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Starport ${VERSION}" --generate-notes --notes "$notes")
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "$GITHUB_REF_NAME" "${args[@]}" "dist/starport-${VERSION}.tgz"
